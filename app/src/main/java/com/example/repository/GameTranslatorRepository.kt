@@ -85,6 +85,7 @@ class GameTranslatorRepository(
         isPixelEnhanceEnabled: Boolean = false,
         provider: TranslationProvider = UserPreferencesManager.selectedProvider.value,
         sampleTextFallback: String? = null,
+        preExtractedOcrBlocks: List<OcrBlock>? = null,
         onInstantPreview: (suspend (TranslationResponsePayload) -> Unit)? = null
     ): Result<TranslationResponsePayload> = withContext(Dispatchers.IO) {
         val geminiKey = UserPreferencesManager.getEffectiveGeminiKey()
@@ -106,8 +107,12 @@ class GameTranslatorRepository(
             bitmap
         }
 
-        // Step 2: Extract real in-game text using ML Kit OCR
-        var ocrBlocks = GameTextRecognizer.recognizeGameText(processedBitmap)
+        // Step 2: Extract real in-game text using ML Kit OCR (or reuse pre-extracted blocks for instant speed)
+        var ocrBlocks = if (!preExtractedOcrBlocks.isNullOrEmpty()) {
+            preExtractedOcrBlocks
+        } else {
+            GameTextRecognizer.recognizeGameText(processedBitmap)
+        }
         if (ocrBlocks.isEmpty() && !sampleTextFallback.isNullOrBlank()) {
             ocrBlocks = listOf(OcrBlock(text = sampleTextFallback))
         }

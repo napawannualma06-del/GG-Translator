@@ -46,10 +46,12 @@ import androidx.core.app.NotificationCompat
 import com.example.GameTranslatorApp
 import com.example.MainActivity
 import com.example.R
+import com.example.data.model.AutoTranslateSpeed
 import com.example.data.model.CharacterPronounConfig
 import com.example.data.model.GameEra
 import com.example.data.model.TranslationResponsePayload
 import com.example.util.GameTextRecognizer
+import com.example.util.OcrBlock
 import com.example.util.ScreenCaptureManager
 import com.example.util.TargetFrameManager
 import com.example.util.TargetFrameRect
@@ -129,6 +131,7 @@ class GameOverlayService : Service() {
     private var cardStatusText: TextView? = null
     private var cardResultsScroll: ScrollView? = null
     private var cardAutoBtn: TextView? = null
+    private var cardSpeedBtn: TextView? = null
     private var frameAutoBtn: TextView? = null
     private var cardBadge: TextView? = null
 
@@ -150,6 +153,14 @@ class GameOverlayService : Service() {
                     stopAutoTranslateLoop()
                 }
                 updateAllAutoButtons(enabled)
+            }
+        }
+
+        serviceScope.launch {
+            UserPreferencesManager.autoTranslateSpeed.collect { speed ->
+                withContext(Dispatchers.Main) {
+                    cardSpeedBtn?.text = " ⏱️ ${speed.title} "
+                }
             }
         }
     }
@@ -989,6 +1000,39 @@ class GameOverlayService : Service() {
         }
         headerRow.addView(spacer)
 
+        // Speed adjustment button right on the overlay card
+        val speedBtn = TextView(this).apply {
+            val curSpeed = UserPreferencesManager.autoTranslateSpeed.value
+            text = " ⏱️ ${curSpeed.title} "
+            setTextColor(Color.parseColor("#38BDF8"))
+            textSize = 10f
+            typeface = Typeface.DEFAULT_BOLD
+            val p = (3 * density).toInt()
+            setPadding(p, 0, p, 0)
+            val bgDrawable = GradientDrawable().apply {
+                setColor(Color.parseColor("#0C2340"))
+                cornerRadius = 5 * density
+                setStroke((1 * density).toInt(), Color.parseColor("#0284C7"))
+            }
+            background = bgDrawable
+            setOnClickListener {
+                val speeds = AutoTranslateSpeed.entries
+                val current = UserPreferencesManager.autoTranslateSpeed.value
+                val nextIdx = (speeds.indexOf(current) + 1) % speeds.size
+                val nextSpeed = speeds[nextIdx]
+                UserPreferencesManager.setAutoTranslateSpeed(nextSpeed)
+                text = " ⏱️ ${nextSpeed.title} "
+                Toast.makeText(this@GameOverlayService, "⚡ ปรับความเร็วแปล: ${nextSpeed.title} (${nextSpeed.subtitle})", Toast.LENGTH_SHORT).show()
+            }
+        }
+        cardSpeedBtn = speedBtn
+        headerRow.addView(speedBtn)
+
+        val btnSpacer = View(this).apply {
+            layoutParams = LinearLayout.LayoutParams((6 * density).toInt(), 1)
+        }
+        headerRow.addView(btnSpacer)
+
         // Minimalist Auto toggle
         val autoCardBtn = TextView(this).apply {
             val isAuto = UserPreferencesManager.isAutoTranslateEnabled.value
@@ -1247,7 +1291,11 @@ class GameOverlayService : Service() {
         updateDynamicFontSize()
     }
 
-    private fun executeTranslationProcess(providedBitmap: Bitmap?, isAuto: Boolean) {
+    private fun executeTranslationProcess(
+        providedBitmap: Bitmap?,
+        isAuto: Boolean,
+        preExtractedOcrBlocks: List<OcrBlock>? = null
+    ) {
         val metrics = resources.displayMetrics
 
         if (!isAuto) {
@@ -1362,6 +1410,7 @@ class GameOverlayService : Service() {
                     pronounConfig = CharacterPronounConfig("ฉัน", "เธอ", "สำนวนเกม"),
                     isPixelEnhanceEnabled = (currentEra == GameEra.RETRO_PIXEL_GBA),
                     provider = UserPreferencesManager.selectedProvider.value,
+                    preExtractedOcrBlocks = preExtractedOcrBlocks,
                     onInstantPreview = if (isAuto) null else { previewPayload ->
                         withContext(Dispatchers.Main) {
                             cardLoadingBar?.visibility = View.VISIBLE
@@ -1409,7 +1458,8 @@ class GameOverlayService : Service() {
         autoTranslateJob = serviceScope.launch {
             Log.d("GameOverlayService", "Auto-translate background loop started")
             while (isActive && isServiceRunning && UserPreferencesManager.isAutoTranslateEnabled.value) {
-                delay(250) // Responsive polling to monitor typewriter animation and screen changes
+                val speed = UserPreferencesManager.autoTranslateSpeed.value
+                delay(speed.pollMs)
 
                 if (!ScreenCaptureManager.hasProjection || isAutoTranslating) {
                     continue
@@ -1501,8 +1551,9 @@ class GameOverlayService : Service() {
                 rawCombined.endsWith(".") || rawCombined.endsWith("!") || rawCombined.endsWith("?") ||
                 rawCombined.endsWith("\"") || rawCombined.endsWith("”") || rawCombined.endsWith("…")
 
-            // Wait 500ms if terminal marker is present, or 800ms for plain text without marker to ensure 100% calm
-            val requiredStability = if (hasTerminalMarker) 500L else 800L
+            // User-adjustable speed: wait until stable based on selected preference
+            val speed = UserPreferencesManager.autoTranslateSpeed.value
+            val requiredStability = if (hasTerminalMarker) speed.terminalMs else speed.stabilityMs
 
             if (stableDuration < requiredStability) {
                 // Still waiting for sentence to be fully typed out and calm
@@ -1522,7 +1573,7 @@ class GameOverlayService : Service() {
                 if (overlayCardView == null) {
                     showTranslationOverlayCard(autoTriggered = true)
                 }
-                executeTranslationProcess(bitmapToAnalyze, isAuto = true)
+                executeTranslationProcess(bitmapToAnalyze, isAuto = true, preExtractedOcrBlocks = ocrBlocks)
             }
         } catch (e: Exception) {
             Log.e("GameOverlayService", "Error in performAutoTranslateTick: ${e.message}")
@@ -1630,6 +1681,7 @@ class GameOverlayService : Service() {
             cardStatusText = null
             cardResultsScroll = null
             cardAutoBtn = null
+            cardSpeedBtn = null
             cardBadge = null
             isCardShowing = false
         }

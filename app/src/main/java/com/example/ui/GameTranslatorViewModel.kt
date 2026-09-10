@@ -159,6 +159,7 @@ class GameTranslatorViewModel(application: Application) : AndroidViewModel(appli
 
     val isOverlayRunning: StateFlow<Boolean> = GameOverlayService.serviceRunningState
     val isAutoTranslateEnabled: StateFlow<Boolean> = UserPreferencesManager.isAutoTranslateEnabled
+    val autoTranslateSpeed: StateFlow<com.example.data.model.AutoTranslateSpeed> = UserPreferencesManager.autoTranslateSpeed
 
     private val _overlayOpacity = MutableStateFlow(0.85f)
     val overlayOpacity: StateFlow<Float> = _overlayOpacity.asStateFlow()
@@ -263,6 +264,10 @@ class GameTranslatorViewModel(application: Application) : AndroidViewModel(appli
 
     fun setAutoTranslateEnabled(enabled: Boolean) {
         UserPreferencesManager.setAutoTranslateEnabled(enabled)
+    }
+
+    fun setAutoTranslateSpeed(speed: com.example.data.model.AutoTranslateSpeed) {
+        UserPreferencesManager.setAutoTranslateSpeed(speed)
     }
 
     fun updatePronouns(self: String, toOther: String, tone: String) {

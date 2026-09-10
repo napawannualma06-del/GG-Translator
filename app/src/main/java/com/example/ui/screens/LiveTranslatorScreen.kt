@@ -37,6 +37,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.PhotoLibrary
@@ -50,10 +51,12 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -97,6 +100,7 @@ import androidx.compose.material.icons.filled.CropFree
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.SystemUpdate
+import com.example.data.model.AutoTranslateSpeed
 
 @Composable
 fun LiveTranslatorScreen(
@@ -122,6 +126,7 @@ fun LiveTranslatorScreen(
     val isScreenCaptureReady by viewModel.isScreenCaptureReady.collectAsStateWithLifecycle()
     val hasTargetFrame by viewModel.hasTargetFrame.collectAsStateWithLifecycle()
     val isAutoTranslateEnabled by viewModel.isAutoTranslateEnabled.collectAsStateWithLifecycle()
+    val autoTranslateSpeed by viewModel.autoTranslateSpeed.collectAsStateWithLifecycle()
 
     var isOverlayCardVisible by remember { mutableStateOf(true) }
 
@@ -511,6 +516,110 @@ fun LiveTranslatorScreen(
                             uncheckedTrackColor = Slate800
                         ),
                         modifier = Modifier.testTag("auto_translate_switch")
+                    )
+                }
+
+                // Speed Adjustment Section
+                Spacer(modifier = Modifier.height(14.dp))
+                HorizontalDivider(color = Slate800, thickness = 1.dp)
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Bolt,
+                            contentDescription = null,
+                            tint = CyanNeon,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "ความเร็วในการแปล (Response Speed)",
+                            color = Color.White,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(CyanNeon.copy(alpha = 0.15f))
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            text = "${autoTranslateSpeed.title} (${autoTranslateSpeed.subtitle})",
+                            color = CyanNeon,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // 4 Interactive Speed Presets
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    AutoTranslateSpeed.entries.forEach { speed ->
+                        val isSelected = autoTranslateSpeed == speed
+                        Surface(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(10.dp))
+                                .clickable { viewModel.setAutoTranslateSpeed(speed) }
+                                .border(
+                                    width = if (isSelected) 1.5.dp else 1.dp,
+                                    color = if (isSelected) CyanNeon else Slate700,
+                                    shape = RoundedCornerShape(10.dp)
+                                ),
+                            color = if (isSelected) CyanNeon.copy(alpha = 0.2f) else Slate950.copy(alpha = 0.5f),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 8.dp, horizontal = 2.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text(
+                                    text = speed.title,
+                                    color = if (isSelected) CyanNeon else Color.White,
+                                    fontSize = 10.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                    maxLines = 1
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = speed.subtitle,
+                                    color = if (isSelected) EmeraldGlow else Slate400,
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Slate950.copy(alpha = 0.5f))
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "💡 ${autoTranslateSpeed.description}",
+                        color = Slate200,
+                        fontSize = 11.sp,
+                        lineHeight = 15.sp
                     )
                 }
             }

@@ -3,6 +3,7 @@ package com.example.util
 import android.content.Context
 import android.content.SharedPreferences
 import com.example.BuildConfig
+import com.example.data.model.AutoTranslateSpeed
 import com.example.data.model.TranslationProvider
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -16,6 +17,7 @@ object UserPreferencesManager {
     private const val KEY_GAME_TITLE = "custom_game_title"
     private const val KEY_GAME_ERA = "custom_game_era"
     private const val KEY_AUTO_TRANSLATE = "is_auto_translate_enabled"
+    private const val KEY_AUTO_TRANSLATE_SPEED = "auto_translate_speed_mode"
     private const val KEY_SELECTED_GEMINI_MODEL = "selected_gemini_model"
     private const val KEY_SELECTED_DEEPSEEK_MODEL = "selected_deepseek_model"
 
@@ -23,6 +25,9 @@ object UserPreferencesManager {
 
     private val _isAutoTranslateEnabled = MutableStateFlow(false)
     val isAutoTranslateEnabled: StateFlow<Boolean> = _isAutoTranslateEnabled.asStateFlow()
+
+    private val _autoTranslateSpeed = MutableStateFlow(AutoTranslateSpeed.FAST)
+    val autoTranslateSpeed: StateFlow<AutoTranslateSpeed> = _autoTranslateSpeed.asStateFlow()
 
     private val _geminiApiKey = MutableStateFlow("")
     val geminiApiKey: StateFlow<String> = _geminiApiKey.asStateFlow()
@@ -83,11 +88,19 @@ object UserPreferencesManager {
         }
 
         _isAutoTranslateEnabled.value = sp.getBoolean(KEY_AUTO_TRANSLATE, false)
+
+        val savedSpeedId = sp.getString(KEY_AUTO_TRANSLATE_SPEED, AutoTranslateSpeed.FAST.id)
+        _autoTranslateSpeed.value = AutoTranslateSpeed.fromId(savedSpeedId)
     }
 
     fun setAutoTranslateEnabled(enabled: Boolean) {
         _isAutoTranslateEnabled.value = enabled
         prefs?.edit()?.putBoolean(KEY_AUTO_TRANSLATE, enabled)?.apply()
+    }
+
+    fun setAutoTranslateSpeed(speed: AutoTranslateSpeed) {
+        _autoTranslateSpeed.value = speed
+        prefs?.edit()?.putString(KEY_AUTO_TRANSLATE_SPEED, speed.id)?.apply()
     }
 
     fun setGeminiApiKey(key: String) {
