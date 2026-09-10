@@ -111,10 +111,13 @@ class GameOverlayService : Service() {
     private var savedCardWidth: Int? = null
     private var savedCardHeight: Int? = null
 
-    // Auto-Translate State
+    // Auto-Translate Stability & Typewriter detection State
     private var autoTranslateJob: Job? = null
-    private var lastDetectedText: String = ""
-    private var lastTranslationTimestamp: Long = 0L
+    private var activeTranslationJob: Job? = null
+    private var candidateDialogueText: String = ""
+    private var candidateLastChangeTime: Long = 0L
+    private var lastTranslatedDialogue: String = ""
+    private var lastRenderedThai: String = ""
     private var consecutiveEmptyTicks: Int = 0
     @Volatile
     private var isAutoTranslating = false
@@ -844,7 +847,8 @@ class GameOverlayService : Service() {
             heightRatio = (h.toFloat() / realH.toFloat()).coerceIn(0.02f, 1f)
         )
         TargetFrameManager.setTargetFrame(rect)
-        lastDetectedText = "" // reset cache so newly framed dialogue triggers translation immediately
+        candidateDialogueText = ""
+        lastTranslatedDialogue = "" // reset cache so newly framed dialogue triggers translation immediately
     }
 
     private fun saveCurrentTargetRect(x: Int, y: Int, w: Int, h: Int) {
@@ -856,7 +860,8 @@ class GameOverlayService : Service() {
             heightRatio = (h.toFloat() / realH.toFloat()).coerceIn(0.02f, 1f)
         )
         TargetFrameManager.setTargetFrame(rect)
-        lastDetectedText = "" // reset cache so newly framed dialogue triggers translation immediately
+        candidateDialogueText = ""
+        lastTranslatedDialogue = "" // reset cache so newly framed dialogue triggers translation immediately
     }
 
     private fun hideAimingFrameView() {
@@ -1164,7 +1169,19 @@ class GameOverlayService : Service() {
             return
         }
 
-        // Render CLEAN dialogue lines
+        val combinedThai = payload.translations.joinToString("\n") {
+            val speaker = if (!it.speaker.isNullOrBlank() && it.speaker.lowercase() != "null") "${it.speaker}: " else ""
+            "$speaker${it.translatedText.trim()}"
+        }.trim()
+
+        // If identical to what is already on screen, avoid redraw flicker!
+        if (combinedThai.isNotBlank() && combinedThai == lastRenderedThai) {
+            cardLoadingBar?.visibility = View.GONE
+            return
+        }
+        lastRenderedThai = combinedThai
+
+        // Render CLEAN dialogue lines smoothly
         cardResultsContainer?.removeAllViews()
         payload.translations.forEach { block ->
             val speakerName = block.speaker?.trim()
@@ -1201,6 +1218,7 @@ class GameOverlayService : Service() {
             }
             cardResultsContainer?.addView(dialogueView)
         }
+        cardLoadingBar?.visibility = View.GONE
         updateDynamicFontSize()
     }
 
@@ -1211,141 +1229,152 @@ class GameOverlayService : Service() {
             cardLoadingBar?.visibility = View.VISIBLE
             cardStatusText?.visibility = View.GONE
             cardResultsScroll?.visibility = View.VISIBLE
+        } else {
+            // In auto mode, only show loading spinner if card is currently empty to prevent distracting flash
+            if ((cardResultsContainer?.childCount ?: 0) == 0) {
+                cardLoadingBar?.visibility = View.VISIBLE
+            }
         }
 
-        serviceScope.launch {
-            // 1. Acquire Bitmap with instant capture fallback
-            val bitmapToTranslate: Bitmap = if (providedBitmap != null) {
-                providedBitmap
-            } else {
-                val fullScreenshot = if (ScreenCaptureManager.hasProjection) {
-                    ScreenCaptureManager.captureLatestScreenshot()
-                        ?: ScreenCaptureManager.acquireScreenshotWithWait(150)
-                } else null
+        // Cancel previous in-flight translation job to prevent race conditions
+        activeTranslationJob?.cancel()
+        activeTranslationJob = serviceScope.launch {
+            try {
+                // 1. Acquire Bitmap with instant capture fallback
+                val bitmapToTranslate: Bitmap = if (providedBitmap != null) {
+                    providedBitmap
+                } else {
+                    val fullScreenshot = if (ScreenCaptureManager.hasProjection) {
+                        ScreenCaptureManager.captureLatestScreenshot()
+                            ?: ScreenCaptureManager.acquireScreenshotWithWait(150)
+                    } else null
 
-                if (fullScreenshot == null && !ScreenCaptureManager.hasProjection) {
-                    if (!isAuto) {
+                    if (fullScreenshot == null && !ScreenCaptureManager.hasProjection) {
+                        if (!isAuto) {
+                            withContext(Dispatchers.Main) {
+                                cardLoadingBar?.visibility = View.GONE
+                                cardStatusText?.visibility = View.GONE
+                                cardResultsScroll?.visibility = View.VISIBLE
+                                cardResultsContainer?.removeAllViews()
+
+                                val warnBox = LinearLayout(this@GameOverlayService).apply {
+                                    orientation = LinearLayout.VERTICAL
+                                    gravity = Gravity.CENTER
+                                    val p = (10 * metrics.density).toInt()
+                                    setPadding(p, p, p, p)
+                                }
+
+                                val warnView = TextView(this@GameOverlayService).apply {
+                                    text = "📌 ยังไม่พบสิทธิ์จับภาพหน้าจอเกม"
+                                    setTextColor(Color.parseColor("#FCD34D"))
+                                    textSize = 14f
+                                    typeface = Typeface.DEFAULT_BOLD
+                                    gravity = Gravity.CENTER
+                                }
+                                warnBox.addView(warnView)
+
+                                val openPermissionBtn = Button(this@GameOverlayService).apply {
+                                    text = "⚡ แตะเพื่อเปิดสิทธิ์ 'บันทึกหน้าจอ' ทันที"
+                                    textSize = 12f
+                                    setTextColor(Color.WHITE)
+                                    val btnBg = GradientDrawable().apply {
+                                        setColor(Color.parseColor("#D97706"))
+                                        cornerRadius = 8 * metrics.density
+                                    }
+                                    background = btnBg
+                                    val bp = (6 * metrics.density).toInt()
+                                    setPadding(bp * 2, bp, bp * 2, bp)
+                                    val lp = LinearLayout.LayoutParams(
+                                        LinearLayout.LayoutParams.WRAP_CONTENT,
+                                        LinearLayout.LayoutParams.WRAP_CONTENT
+                                    ).apply {
+                                        topMargin = (8 * metrics.density).toInt()
+                                    }
+                                    layoutParams = lp
+                                    setOnClickListener {
+                                        val appIntent = Intent(this@GameOverlayService, MainActivity::class.java).apply {
+                                            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                                            putExtra(MainActivity.EXTRA_REQUEST_CAPTURE, true)
+                                        }
+                                        startActivity(appIntent)
+                                        dismissOverlayCard()
+                                    }
+                                }
+                                warnBox.addView(openPermissionBtn)
+                                cardResultsContainer?.addView(warnBox)
+                            }
+                        }
+                        return@launch
+                    }
+
+                    if (fullScreenshot != null) {
+                        if (TargetFrameManager.hasTargetFrame()) {
+                            TargetFrameManager.cropToTarget(fullScreenshot)
+                        } else {
+                            fullScreenshot
+                        }
+                    } else {
+                        Bitmap.createBitmap(800, 450, Bitmap.Config.ARGB_8888)
+                    }
+                }
+
+                val currentGame = UserPreferencesManager.gameTitle.value.ifBlank { "Pokémon" }
+                val currentEra = if (currentGame.contains("pokemon", ignoreCase = true) ||
+                    currentGame.contains("โปเกมอน", ignoreCase = true) ||
+                    currentGame.contains("emerald", ignoreCase = true) ||
+                    currentGame.contains("gba", ignoreCase = true)
+                ) {
+                    GameEra.RETRO_PIXEL_GBA
+                } else {
+                    UserPreferencesManager.gameEra.value
+                }
+
+                val repo = GameTranslatorApp.instance.repository
+                val result = repo.translateGameScreen(
+                    bitmap = bitmapToTranslate,
+                    gameTitle = currentGame,
+                    era = currentEra,
+                    pronounConfig = CharacterPronounConfig("ฉัน", "เธอ", "สำนวนเกม"),
+                    isPixelEnhanceEnabled = (currentEra == GameEra.RETRO_PIXEL_GBA),
+                    provider = UserPreferencesManager.selectedProvider.value,
+                    onInstantPreview = if (isAuto) null else { previewPayload ->
                         withContext(Dispatchers.Main) {
-                            cardLoadingBar?.visibility = View.GONE
+                            cardLoadingBar?.visibility = View.VISIBLE
                             cardStatusText?.visibility = View.GONE
+                            cardResultsScroll?.visibility = View.VISIBLE
+                            renderDialogueResults(previewPayload, isAuto = isAuto, currentGame = currentGame)
+                        }
+                    }
+                )
+
+                result.onSuccess { payload ->
+                    withContext(Dispatchers.Main) {
+                        cardLoadingBar?.visibility = View.GONE
+                        cardStatusText?.visibility = View.GONE
+                        cardResultsScroll?.visibility = View.VISIBLE
+                        renderDialogueResults(payload, isAuto = isAuto, currentGame = currentGame)
+                    }
+                }.onFailure { err ->
+                    withContext(Dispatchers.Main) {
+                        cardLoadingBar?.visibility = View.GONE
+                        cardStatusText?.visibility = View.GONE
+                        if (!isAuto && (cardResultsContainer?.childCount ?: 0) == 0) {
                             cardResultsScroll?.visibility = View.VISIBLE
                             cardResultsContainer?.removeAllViews()
 
-                            val warnBox = LinearLayout(this@GameOverlayService).apply {
-                                orientation = LinearLayout.VERTICAL
+                            val errorView = TextView(this@GameOverlayService).apply {
+                                text = "การแปลขัดข้อง: ${err.message ?: "โปรดตรวจสอบ API Key"}"
+                                setTextColor(Color.parseColor("#F87171"))
+                                textSize = 13f
                                 gravity = Gravity.CENTER
-                                val p = (10 * metrics.density).toInt()
-                                setPadding(p, p, p, p)
+                                setPadding(0, 10, 0, 10)
                             }
-
-                            val warnView = TextView(this@GameOverlayService).apply {
-                                text = "📌 ยังไม่พบสิทธิ์จับภาพหน้าจอเกม"
-                                setTextColor(Color.parseColor("#FCD34D"))
-                                textSize = 14f
-                                typeface = Typeface.DEFAULT_BOLD
-                                gravity = Gravity.CENTER
-                            }
-                            warnBox.addView(warnView)
-
-                            val openPermissionBtn = Button(this@GameOverlayService).apply {
-                                text = "⚡ แตะเพื่อเปิดสิทธิ์ 'บันทึกหน้าจอ' ทันที"
-                                textSize = 12f
-                                setTextColor(Color.WHITE)
-                                val btnBg = GradientDrawable().apply {
-                                    setColor(Color.parseColor("#D97706"))
-                                    cornerRadius = 8 * metrics.density
-                                }
-                                background = btnBg
-                                val bp = (6 * metrics.density).toInt()
-                                setPadding(bp * 2, bp, bp * 2, bp)
-                                val lp = LinearLayout.LayoutParams(
-                                    LinearLayout.LayoutParams.WRAP_CONTENT,
-                                    LinearLayout.LayoutParams.WRAP_CONTENT
-                                ).apply {
-                                    topMargin = (8 * metrics.density).toInt()
-                                }
-                                layoutParams = lp
-                                setOnClickListener {
-                                    val appIntent = Intent(this@GameOverlayService, MainActivity::class.java).apply {
-                                        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
-                                        putExtra(MainActivity.EXTRA_REQUEST_CAPTURE, true)
-                                    }
-                                    startActivity(appIntent)
-                                    dismissOverlayCard()
-                                }
-                            }
-                            warnBox.addView(openPermissionBtn)
-                            cardResultsContainer?.addView(warnBox)
+                            cardResultsContainer?.addView(errorView)
                         }
                     }
-                    return@launch
                 }
-
-                if (fullScreenshot != null) {
-                    if (TargetFrameManager.hasTargetFrame()) {
-                        TargetFrameManager.cropToTarget(fullScreenshot)
-                    } else {
-                        fullScreenshot
-                    }
-                } else {
-                    Bitmap.createBitmap(800, 450, Bitmap.Config.ARGB_8888)
-                }
-            }
-
-            val currentGame = UserPreferencesManager.gameTitle.value.ifBlank { "Pokémon" }
-            val currentEra = if (currentGame.contains("pokemon", ignoreCase = true) ||
-                currentGame.contains("โปเกมอน", ignoreCase = true) ||
-                currentGame.contains("emerald", ignoreCase = true) ||
-                currentGame.contains("gba", ignoreCase = true)
-            ) {
-                GameEra.RETRO_PIXEL_GBA
-            } else {
-                UserPreferencesManager.gameEra.value
-            }
-
-            val repo = GameTranslatorApp.instance.repository
-            val result = repo.translateGameScreen(
-                bitmap = bitmapToTranslate,
-                gameTitle = currentGame,
-                era = currentEra,
-                pronounConfig = CharacterPronounConfig("ฉัน", "เธอ", "สำนวนเกม"),
-                isPixelEnhanceEnabled = (currentEra == GameEra.RETRO_PIXEL_GBA),
-                provider = UserPreferencesManager.selectedProvider.value,
-                onInstantPreview = { previewPayload ->
-                    withContext(Dispatchers.Main) {
-                        cardLoadingBar?.visibility = View.VISIBLE
-                        cardStatusText?.visibility = View.GONE
-                        cardResultsScroll?.visibility = View.VISIBLE
-                        renderDialogueResults(previewPayload, isAuto = isAuto, currentGame = currentGame)
-                    }
-                }
-            )
-
-            result.onSuccess { payload ->
-                withContext(Dispatchers.Main) {
-                    cardLoadingBar?.visibility = View.GONE
-                    cardStatusText?.visibility = View.GONE
-                    cardResultsScroll?.visibility = View.VISIBLE
-                    renderDialogueResults(payload, isAuto = isAuto, currentGame = currentGame)
-                }
-            }.onFailure { err ->
-                withContext(Dispatchers.Main) {
-                    cardLoadingBar?.visibility = View.GONE
-                    cardStatusText?.visibility = View.GONE
-                    if (!isAuto && (cardResultsContainer?.childCount ?: 0) == 0) {
-                        cardResultsScroll?.visibility = View.VISIBLE
-                        cardResultsContainer?.removeAllViews()
-
-                        val errorView = TextView(this@GameOverlayService).apply {
-                            text = "การแปลขัดข้อง: ${err.message ?: "โปรดตรวจสอบ API Key"}"
-                            setTextColor(Color.parseColor("#F87171"))
-                            textSize = 13f
-                            gravity = Gravity.CENTER
-                            setPadding(0, 10, 0, 10)
-                        }
-                        cardResultsContainer?.addView(errorView)
-                    }
-                }
+            } finally {
+                isAutoTranslating = false
             }
         }
     }
@@ -1355,7 +1384,7 @@ class GameOverlayService : Service() {
         autoTranslateJob = serviceScope.launch {
             Log.d("GameOverlayService", "Auto-translate background loop started")
             while (isActive && isServiceRunning && UserPreferencesManager.isAutoTranslateEnabled.value) {
-                delay(500) // Responsive check every ~500ms
+                delay(250) // Responsive polling to monitor typewriter animation and screen changes
 
                 if (!ScreenCaptureManager.hasProjection || isAutoTranslating) {
                     continue
@@ -1369,12 +1398,15 @@ class GameOverlayService : Service() {
     private fun stopAutoTranslateLoop() {
         autoTranslateJob?.cancel()
         autoTranslateJob = null
+        activeTranslationJob?.cancel()
+        activeTranslationJob = null
+        candidateDialogueText = ""
+        candidateLastChangeTime = 0L
         isAutoTranslating = false
     }
 
     private suspend fun performAutoTranslateTick() {
         if (isAutoTranslating) return
-        isAutoTranslating = true
         try {
             val fullScreenshot = ScreenCaptureManager.captureLatestScreenshot() ?: return
             val bitmapToAnalyze = if (TargetFrameManager.hasTargetFrame()) {
@@ -1386,8 +1418,11 @@ class GameOverlayService : Service() {
             val ocrBlocks = GameTextRecognizer.recognizeGameText(bitmapToAnalyze)
             if (ocrBlocks.isEmpty()) {
                 consecutiveEmptyTicks++
-                if (consecutiveEmptyTicks >= 2) {
-                    lastDetectedText = "" // screen has cleared dialogue, reset so next line will translate
+                if (consecutiveEmptyTicks >= 4) {
+                    // Screen has cleared dialogue box
+                    candidateDialogueText = ""
+                    candidateLastChangeTime = 0L
+                    lastTranslatedDialogue = ""
                     if (isCardShowing) {
                         withContext(Dispatchers.Main) {
                             dismissOverlayCard()
@@ -1397,42 +1432,66 @@ class GameOverlayService : Service() {
                 return
             }
 
-            val combinedRaw = ocrBlocks
+            // Text detected on screen
+            consecutiveEmptyTicks = 0
+
+            // Assemble OCR blocks in natural reading order
+            val sortedBlocks = ocrBlocks.sortedBy { it.boundingBox?.top ?: 0 }
+            val rawCombined = sortedBlocks
                 .map { it.text.trim() }
                 .filter { it.isNotBlank() }
                 .joinToString(" ")
+                .replace(Regex("\\s+"), " ")
+                .trim()
 
-            val normalized = combinedRaw.replace(Regex("\\s+"), " ").trim()
-            if (!isGenuineDialogue(normalized)) {
-                consecutiveEmptyTicks++
-                if (consecutiveEmptyTicks >= 2) {
-                    lastDetectedText = ""
-                    if (isCardShowing) {
-                        withContext(Dispatchers.Main) {
-                            dismissOverlayCard()
-                        }
-                    }
-                }
+            if (!isGenuineDialogue(rawCombined)) {
                 return
             }
 
-            // "ถ้าเจอคำเดิมไม่เปลี่ยนเฟรมไม่ต้องแปล"
-            // Compare with last dialogue using fuzzy and punctuation-free matching
-            if (lastDetectedText.isNotBlank() && isSameDialogue(normalized, lastDetectedText)) {
-                consecutiveEmptyTicks = 0
-                return // คำเดิมในกรอบ ไม่เปลี่ยนเฟรม ไม่ต้องแปลซ้ำ!
+            val cleanCurrent = cleanDialogueForComparison(rawCombined)
+            val cleanLastTranslated = cleanDialogueForComparison(lastTranslatedDialogue)
+
+            // 1. If this exact dialogue is already translated and showing, do nothing!
+            if (cleanLastTranslated.isNotEmpty() && isSameDialogue(rawCombined, lastTranslatedDialogue)) {
+                return
             }
 
-            // Minimum time between translations to prevent spamming while reading typewriter
             val now = System.currentTimeMillis()
-            if (now - lastTranslationTimestamp < 350L) {
+            val cleanCandidate = cleanDialogueForComparison(candidateDialogueText)
+
+            // 2. Typewriter Effect Detection: Is text still being typed out?
+            if (cleanCandidate.isEmpty() || cleanCurrent != cleanCandidate) {
+                // Text changed or is actively growing
+                candidateDialogueText = rawCombined
+                candidateLastChangeTime = now
+                // Wait for typewriter animation to finish
                 return
             }
 
-            Log.d("GameOverlayService", "Auto-translate triggered for new dialogue: $normalized")
-            lastDetectedText = normalized
-            lastTranslationTimestamp = now
-            consecutiveEmptyTicks = 0
+            // 3. Text has not changed between ticks (cleanCurrent == cleanCandidate)
+            val stableDuration = now - candidateLastChangeTime
+
+            // Check for end-of-dialogue indicators (Pokemon triangle cursor 🔻/▼ or sentence punctuation)
+            val hasTerminalMarker = rawCombined.contains(Regex("[🔻▼▶►>]")) ||
+                rawCombined.endsWith(".") || rawCombined.endsWith("!") || rawCombined.endsWith("?") ||
+                rawCombined.endsWith("\"") || rawCombined.endsWith("”") || rawCombined.endsWith("…")
+
+            // Wait 250ms if terminal marker is present, or 450ms for plain text without marker
+            val requiredStability = if (hasTerminalMarker) 250L else 450L
+
+            if (stableDuration < requiredStability) {
+                // Still waiting for sentence to be fully typed out
+                return
+            }
+
+            // 4. Text is fully STABLE and COMPLETE!
+            if (isSameDialogue(rawCombined, lastTranslatedDialogue)) {
+                return
+            }
+
+            Log.d("GameOverlayService", "Auto-translate triggered for stable complete dialogue: $rawCombined")
+            lastTranslatedDialogue = rawCombined
+            isAutoTranslating = true
 
             withContext(Dispatchers.Main) {
                 if (overlayCardView == null) {
@@ -1442,7 +1501,6 @@ class GameOverlayService : Service() {
             }
         } catch (e: Exception) {
             Log.e("GameOverlayService", "Error in performAutoTranslateTick: ${e.message}")
-        } finally {
             isAutoTranslating = false
         }
     }
@@ -1476,7 +1534,7 @@ class GameOverlayService : Service() {
 
     private fun cleanDialogueForComparison(text: String): String {
         return text
-            .replace(Regex("[▼▶►>_~.…\\-\\:\\;\\,\\.\\!\\?\\'\\\"\\(\\)\\[\\]\\{\\}]"), " ")
+            .replace(Regex("[🔻▼▶►>_~.…\\-\\:\\;\\,\\.\\!\\?\\'\\\"\\(\\)\\[\\]\\{\\}]"), " ")
             .replace(Regex("\\s+"), " ")
             .trim()
             .lowercase()
@@ -1488,17 +1546,11 @@ class GameOverlayService : Service() {
         if (c1.isEmpty() || c2.isEmpty()) return false
         if (c1 == c2) return true
 
-        // Substring / typewriter effect check
-        if (c1.startsWith(c2) || c2.startsWith(c1)) {
-            val lenDiff = Math.abs(c1.length - c2.length)
-            if (lenDiff <= 3) return true
-        }
-
-        // Fuzzy edit distance check (ignore small OCR misrecognitions like 1 char)
+        // Fuzzy edit distance check (ignore small OCR misrecognitions)
         val dist = computeLevenshteinDistance(c1, c2)
         val maxLen = Math.max(c1.length, c2.length)
         val similarity = 1.0 - (dist.toDouble() / maxLen.toDouble())
-        return similarity >= 0.82
+        return similarity >= 0.85
     }
 
     private fun computeLevenshteinDistance(s1: String, s2: String): Int {

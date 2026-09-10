@@ -123,8 +123,9 @@ class GameTranslatorRepository(
                 }
             }
 
-            // Fire instant on-device preview so user sees translated Thai text in ~40ms
-            if (onInstantPreview != null) {
+            // Only fire instant fallback preview if neither Gemini nor DeepSeek API Key is configured
+            val hasApiKey = if (provider == TranslationProvider.DEEPSEEK) deepseekKey.isNotBlank() else geminiKey.isNotBlank()
+            if (!hasApiKey && onInstantPreview != null) {
                 val instantPreview = translateOcrBlocksDirectly(ocrBlocks, gameTitle, effectiveEra, pronounConfig)
                 if (instantPreview.translations.any { GameTextRecognizer.containsThai(it.translatedText) }) {
                     onInstantPreview(instantPreview)

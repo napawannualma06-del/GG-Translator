@@ -79,9 +79,11 @@ object GameTextRecognizer {
         val imgW = bitmap.width.toFloat().coerceAtLeast(1f)
         val imgH = bitmap.height.toFloat().coerceAtLeast(1f)
 
-        for (textBlock in visionText.textBlocks) {
-            val blockText = textBlock.text.trim()
-            if (blockText.isBlank() || isNoiseArtifact(blockText)) continue
+        val sortedTextBlocks = visionText.textBlocks.sortedBy { it.boundingBox?.top ?: 0 }
+
+        for (textBlock in sortedTextBlocks) {
+            val rawBlockText = textBlock.text.trim()
+            if (rawBlockText.isBlank() || isNoiseArtifact(rawBlockText)) continue
 
             val box = textBlock.boundingBox
             val normBox = if (box != null) {
@@ -95,25 +97,35 @@ object GameTextRecognizer {
 
             // Detect speaker pattern like "BIRCH:" or "Prof. Birch:"
             var speaker: String? = null
-            var dialogue = blockText
+            var dialogue = rawBlockText
 
-            val colonIdx = blockText.indexOf(':')
-            if (colonIdx in 1..25 && !blockText.startsWith("http", ignoreCase = true)) {
-                val candidate = blockText.substring(0, colonIdx).trim()
+            val colonIdx = rawBlockText.indexOf(':')
+            if (colonIdx in 1..25 && !rawBlockText.startsWith("http", ignoreCase = true)) {
+                val candidate = rawBlockText.substring(0, colonIdx).trim()
                 if (candidate.all { it.isLetterOrDigit() || it.isWhitespace() || it == '.' }) {
                     speaker = candidate
-                    dialogue = blockText.substring(colonIdx + 1).trim()
+                    dialogue = rawBlockText.substring(colonIdx + 1).trim()
                 }
             }
 
-            blocks.add(
-                OcrBlock(
-                    text = if (dialogue.isNotBlank()) dialogue else blockText,
-                    speaker = speaker,
-                    boundingBox = box,
-                    normalizedBox = normBox
+            // Clean dialogue: flatten line breaks to single space and remove trailing dialogue continuation markers
+            val cleanedDialogue = dialogue
+                .replace("\r", " ")
+                .replace("\n", " ")
+                .replace(Regex("[▼▶►🔻>_]+$"), "")
+                .replace(Regex("\\s+"), " ")
+                .trim()
+
+            if (cleanedDialogue.isNotBlank()) {
+                blocks.add(
+                    OcrBlock(
+                        text = cleanedDialogue,
+                        speaker = speaker,
+                        boundingBox = box,
+                        normalizedBox = normBox
+                    )
                 )
-            )
+            }
         }
 
         return blocks
