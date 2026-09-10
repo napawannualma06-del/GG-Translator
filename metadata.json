@@ -1,0 +1,6 @@
+{
+  "name": "Game Translator",
+  "description": "Real-time game screen translator with floating bubble overlay and context-aware AI translation from English to Thai.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
