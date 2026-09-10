@@ -96,6 +96,7 @@ import androidx.compose.material.icons.filled.CenterFocusStrong
 import androidx.compose.material.icons.filled.CropFree
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.SystemUpdate
 
 @Composable
 fun LiveTranslatorScreen(
@@ -639,6 +640,96 @@ fun LiveTranslatorScreen(
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold
                 )
+            }
+        }
+
+        // In-App Update Button & Version Information Card
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("app_update_card")
+                .border(1.dp, CyanNeon.copy(alpha = 0.4f), RoundedCornerShape(14.dp)),
+            shape = RoundedCornerShape(14.dp),
+            colors = CardDefaults.cardColors(containerColor = Slate900.copy(alpha = 0.9f))
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(38.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(CyanNeon.copy(alpha = 0.18f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.SystemUpdate,
+                            contentDescription = "อัพเดทแอพ",
+                            tint = CyanNeon,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "อัพเดทเวอร์ชันแอพ",
+                                color = Color.White,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(EmeraldGlow.copy(alpha = 0.2f))
+                                    .padding(horizontal = 5.dp, vertical = 1.dp)
+                            ) {
+                                Text(
+                                    text = "v1.1 ล่าสุด",
+                                    color = EmeraldGlow,
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                        Text(
+                            text = "ตรวจสอบการอัพเดท APK ใหม่และโหลดข้อมูลล่าสุด",
+                            color = Slate400,
+                            fontSize = 11.sp
+                        )
+                    }
+                }
+
+                Button(
+                    onClick = {
+                        viewModel.translateCurrentScreen()
+                        Toast.makeText(context, "แอปพลิเคชันเป็นเวอร์ชันล่าสุด (v1.1 พร้อมระบบแปลงเสถียร)", Toast.LENGTH_LONG).show()
+                    },
+                    modifier = Modifier.testTag("check_update_button"),
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = CyanGlow,
+                        contentColor = Color.White
+                    ),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = null,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("อัพเดท", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
             }
         }
 

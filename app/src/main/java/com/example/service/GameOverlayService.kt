@@ -25,6 +25,7 @@ import android.os.Vibrator
 import android.os.VibratorManager
 import android.text.Spannable
 import android.text.SpannableString
+import android.text.SpannableStringBuilder
 import android.text.style.ForegroundColorSpan
 import android.text.style.StyleSpan
 import android.util.DisplayMetrics
@@ -1169,10 +1170,12 @@ class GameOverlayService : Service() {
             return
         }
 
-        val combinedThai = payload.translations.joinToString("\n") {
-            val speaker = if (!it.speaker.isNullOrBlank() && it.speaker.lowercase() != "null") "${it.speaker}: " else ""
-            "$speaker${it.translatedText.trim()}"
-        }.trim()
+        // Flatten dialogues into continuous sentences without artificial line-breaks from OCR blocks
+        val combinedThai = payload.translations.joinToString(" ") { block ->
+            val speaker = if (!block.speaker.isNullOrBlank() && block.speaker.lowercase() != "null") "${block.speaker}: " else ""
+            val cleanText = block.translatedText.replace("\r", " ").replace("\n", " ").replace(Regex("\\s+"), " ").trim()
+            "$speaker$cleanText"
+        }.replace(Regex("\\s+"), " ").trim()
 
         // If identical to what is already on screen, avoid redraw flicker!
         if (combinedThai.isNotBlank() && combinedThai == lastRenderedThai) {
@@ -1181,43 +1184,65 @@ class GameOverlayService : Service() {
         }
         lastRenderedThai = combinedThai
 
-        // Render CLEAN dialogue lines smoothly
+        // Render CLEAN continuous dialogue text across a smooth full-width layout
         cardResultsContainer?.removeAllViews()
-        payload.translations.forEach { block ->
+
+        // Group by speaker or present as long continuous stream
+        val spannableBuilder = SpannableStringBuilder()
+
+        payload.translations.forEachIndexed { index, block ->
             val speakerName = block.speaker?.trim()
-            val thaiText = block.translatedText.trim()
-            if (thaiText.isBlank()) return@forEach
+            val cleanThaiText = block.translatedText
+                .replace("\r", " ")
+                .replace("\n", " ")
+                .replace(Regex("\\s+"), " ")
+                .trim()
+            if (cleanThaiText.isBlank()) return@forEachIndexed
 
-            val dialogueView = TextView(this@GameOverlayService).apply {
-                val prefix = if (!speakerName.isNullOrBlank() && speakerName.lowercase() != "null") {
-                    "$speakerName: "
-                } else ""
-                val fullMessage = "$prefix$thaiText"
-
-                val spannable = SpannableString(fullMessage)
-                if (prefix.isNotEmpty()) {
-                    spannable.setSpan(
-                        ForegroundColorSpan(Color.parseColor("#F59E0B")),
-                        0,
-                        prefix.length,
-                        Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
-                    )
-                    spannable.setSpan(
-                        StyleSpan(Typeface.BOLD),
-                        0,
-                        prefix.length,
-                        Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
-                    )
-                }
-                text = spannable
-                setTextColor(Color.parseColor("#F8FAFC"))
-                textSize = currentFontSize
-                setLineSpacing(3 * resources.displayMetrics.density, 1.25f)
-                val pad = (4 * resources.displayMetrics.density).toInt()
-                setPadding(0, pad, 0, pad)
+            if (index > 0) {
+                spannableBuilder.append(" ")
             }
-            cardResultsContainer?.addView(dialogueView)
+
+            val prefix = if (!speakerName.isNullOrBlank() && speakerName.lowercase() != "null") {
+                "$speakerName: "
+            } else ""
+
+            val startIdx = spannableBuilder.length
+            spannableBuilder.append(prefix)
+            if (prefix.isNotEmpty()) {
+                spannableBuilder.setSpan(
+                    ForegroundColorSpan(Color.parseColor("#F59E0B")),
+                    startIdx,
+                    startIdx + prefix.length,
+                    Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+                spannableBuilder.setSpan(
+                    StyleSpan(Typeface.BOLD),
+                    startIdx,
+                    startIdx + prefix.length,
+                    Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+            }
+
+            val textStart = spannableBuilder.length
+            spannableBuilder.append(cleanThaiText)
+            spannableBuilder.setSpan(
+                ForegroundColorSpan(Color.parseColor("#F8FAFC")),
+                textStart,
+                spannableBuilder.length,
+                Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
         }
+
+        val dialogueView = TextView(this@GameOverlayService).apply {
+            text = spannableBuilder
+            textSize = currentFontSize
+            setLineSpacing(4 * resources.displayMetrics.density, 1.28f)
+            val pad = (4 * resources.displayMetrics.density).toInt()
+            setPadding(0, pad, 0, pad)
+        }
+        cardResultsContainer?.addView(dialogueView)
+
         cardLoadingBar?.visibility = View.GONE
         updateDynamicFontSize()
     }
@@ -1476,11 +1501,11 @@ class GameOverlayService : Service() {
                 rawCombined.endsWith(".") || rawCombined.endsWith("!") || rawCombined.endsWith("?") ||
                 rawCombined.endsWith("\"") || rawCombined.endsWith("”") || rawCombined.endsWith("…")
 
-            // Wait 250ms if terminal marker is present, or 450ms for plain text without marker
-            val requiredStability = if (hasTerminalMarker) 250L else 450L
+            // Wait 500ms if terminal marker is present, or 800ms for plain text without marker to ensure 100% calm
+            val requiredStability = if (hasTerminalMarker) 500L else 800L
 
             if (stableDuration < requiredStability) {
-                // Still waiting for sentence to be fully typed out
+                // Still waiting for sentence to be fully typed out and calm
                 return
             }
 
